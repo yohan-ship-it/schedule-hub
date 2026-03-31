@@ -340,30 +340,37 @@ function saveApiUrl() {
 }
 
 // ── API CALLS (JSONP — bypasses CORS for Apps Script) ─────────
-// fetch() fails on Apps Script due to redirect + CORS.
-// JSONP injects a <script> tag instead, which has no CORS restrictions.
+let _cbCounter = 0;
 function apiGet(params) {
   return new Promise((resolve, reject) => {
-    const cbName = '_cb_' + Date.now() + '_' + Math.floor(Math.random()*10000);
+    const cbName = '__cb' + (++_cbCounter) + '_' + Date.now();
+    let script;
+
     const timeout = setTimeout(() => {
-      delete window[cbName];
+      cleanup();
       reject(new Error('Request timed out'));
-    }, 15000);
+    }, 20000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      try { if (script && script.parentNode) script.parentNode.removeChild(script); } catch(e){}
+      try { delete window[cbName]; } catch(e){}
+    }
 
     window[cbName] = function(data) {
-      clearTimeout(timeout);
-      delete window[cbName];
-      script.remove();
+      cleanup();
       resolve(data);
     };
 
-    const script = document.createElement('script');
-    params.callback = cbName;
-    script.src = API_URL + '?' + new URLSearchParams(params);
-    script.onerror = () => {
-      clearTimeout(timeout);
-      delete window[cbName];
-      reject(new Error('Script load error'));
+    const p = Object.assign({}, params, { callback: cbName });
+    const qs = Object.keys(p).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(p[k])).join('&');
+
+    script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.src = API_URL + '?' + qs;
+    script.onerror = function() {
+      cleanup();
+      reject(new Error('Failed to reach API'));
     };
     document.head.appendChild(script);
   });
